@@ -26,16 +26,10 @@ from eval import render_example, iterate_examples
 
 # Hyperparameters
 # -----------------------------------------------------
-batch_size = 64 # how many independent sequences to process in each batch
-block_size = 256 # length of each sequence in each batch
-max_iters = 5000 # num of iterations in training loop
-eval_interval = 500 # evaluate model every 500 iterations
-learning_rate = 6e-4 
-eval_iters = 200 # num iterations in evaluation loop
-n_embed = 384 # num of embeddings
-n_head = 6 # num of self-attention heads
-n_layer = 6 # num of layers
-dropout = 0.2 # dropout rate
+max_lr = 6e-4 # following GPT-3 configuration
+min_lr = max_lr * 0.1
+warmup_steps = 715
+max_steps = 19073
 # -----------------------------------------------------
 
 # CausalSelfAttention Module
@@ -422,10 +416,7 @@ raw_model = model.module if ddp else model
 
 # Learning Rate Scheduler
 # -----------------------------------------------------
-max_lr = 6e-4 # following GPT-3 configuration
-min_lr = max_lr * 0.1
-warmup_steps = 715
-max_steps = 19073
+
 
 def get_lr(it):
   if it < warmup_steps: # linear warmup for warmup iterations
@@ -466,7 +457,7 @@ def get_most_likely_row(tokens, mask, logits):
 
 # Optimization
 # -----------------------------------------------------
-optimizer = raw_model.configure_optim(weight_decay=0.1, lr=learning_rate, device_type=device_type)
+optimizer = raw_model.configure_optim(weight_decay=0.1, lr=max_lr, device_type=device_type)
 
 log_dir = "log"
 os.makedirs(log_dir, exist_ok=True)
@@ -553,7 +544,7 @@ for step in range(max_steps):
     max_length = 32
     tokens = enc.encode("Hello, I'm a language model,")
     tokens = torch.tensor(tokens, dtype=torch.long)
-    tokens = tokens.unsqeeze(0).repeat(num_return_sequences, 1)
+    tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
     x = tokens.to(device)
     sample_rng = torch.Generator(device=device)
     sample_rng.manual_seed(42 + ddp_rank)
