@@ -15,7 +15,9 @@ Evaluation was done using [Hellaswag](https://github.com/rowanz/hellaswag) and c
 After evaluating using both the cross entropy loss and the Hellaswag evaluation, I obtained these results:
 ![myGPT2 Evaluation](/myGPT2_eval.png)
 In the image above, you can find the minimum training and validation loss and the maximum Hellaswag accuracy.
+
 The chart on the left shows the loss comparison between myGPT2 and the OpenAI 124M GPT-2 Model. It's very cool that I was able to beat the OpenAI Model!
+
 The chart on the right shows the Hellaswag accuracy comparison between myGPT2 and the OpenAI 124M GPT-2 Model and the OpenAI 124M GPT-3 Model. Again, myGPT2 was able to beat the OpenAI 124M GPT-2 model, but it did not get close to the OpenAI 124M GPT-3 Model.
 
 ## Resources
