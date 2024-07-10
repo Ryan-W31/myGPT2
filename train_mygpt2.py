@@ -21,7 +21,7 @@ from torch.distributed import init_process_group, destroy_process_group
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
-from eval import render_example, iterate_examples
+from hellaswag_eval import render_example, iterate_examples
 # -----------------------------------
 
 # Hyperparameters
@@ -271,8 +271,9 @@ class GPT(nn.Module):
     # get number of decayed and non-decayed tensor and the number of parameters
     num_decay_params = sum(p.numel() for p in decay_params)
     num_nondecay_params = sum(p.numel() for p in nondecay_params)
-    print(f'# of decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters.')
-    print(f'# of non-decayed parameter tensors: {len(nondecay_params)}, with {num_nondecay_params:,} parameters.')
+    if master_process:
+      print(f'# of decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters.')
+      print(f'# of non-decayed parameter tensors: {len(nondecay_params)}, with {num_nondecay_params:,} parameters.')
 
     # finally create an AdamW optimizer with the new parameter group and fused option if it's available
     fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
@@ -407,7 +408,7 @@ if use_compile:
   model = torch.compile(model)
 
 if ddp:
-  model = DDP(model, device_ids={ddp_local_rank})
+  model = DDP(model, device_ids=[ddp_local_rank])
 
 raw_model = model.module if ddp else model
 #print("Woo Hoo! Didn't crash!")
@@ -416,8 +417,6 @@ raw_model = model.module if ddp else model
 
 # Learning Rate Scheduler
 # -----------------------------------------------------
-
-
 def get_lr(it):
   if it < warmup_steps: # linear warmup for warmup iterations
     return max_lr * (it + 1) / warmup_steps
@@ -470,7 +469,7 @@ for step in range(max_steps):
   last_step = step == max_steps - 1 # get last step
 
   # model evaluation every 100 steps
-  if step % 100 == 0:
+  if step % 250 == 0 or last_step:
     model.eval() # model to evaluation mode
     val_loader.reset() # reset data loader
 
@@ -485,13 +484,13 @@ for step in range(max_steps):
         loss = loss / val_loss_steps
         val_loss_accum += loss.detach()
     if ddp:
-      dist.allreduce(val_loss_accum, op=dist.ReduceOp.AVG)
+      dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
     if master_process:
       print(f"Validation Loss: {val_loss_accum.item():.4f}")
 
       # checkpointing
       with open(log_file, "a") as f:
-        f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+        f.write(f"{step} VAL {val_loss_accum.item():.4f}\n")
       if step > 0 and (step % 5000 == 0 or last_step):
           checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
           checkpoint = {
@@ -552,7 +551,7 @@ for step in range(max_steps):
       # forward the model
       with torch.no_grad(): # don't keep track of gradients in these operations
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16): # type casting
-          logits, loss = model(x, y) # forward pass
+          logits, loss = model(x) # forward pass
         logits = logits[:, -1, :] # get logits at the last position (B, vocab_size)
         probs = F.softmax(logits, dim=-1) # get probabilities (B, vocab_size)
         topk_probs, topk_indices = torch.topk(probs, 50, dim=-1) # top-k sampling of 50 (B, 50)
@@ -565,7 +564,7 @@ for step in range(max_steps):
     for i in range(num_return_sequences):
       tokens = x[i, :max_length].tolist()
       decoded = enc.decode(tokens)
-      print(f"Rank {ddp_rank:02d} | Sample {i:02d} > {decoded}")
+      print(f"Rank {ddp_rank:03d} | Sample {i:03d} > {decoded}")
       
   # training loop
   model.train()
@@ -586,7 +585,7 @@ for step in range(max_steps):
     loss.backward() # backprop
 
   if ddp:
-    dist.allreduce(loss_accum, op=dist.ReduceOp.AVG)
+    dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
   norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) # normalize gradients
 
   # update learning rate using warmup and cosin decay
@@ -607,7 +606,7 @@ for step in range(max_steps):
 
   if master_process:
     print(f'step: {step:2d} | loss: {loss_accum.item():.4f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tokens/sec: {tps:.2f}')
-    with open(log_file, "w") as f:
+    with open(log_file, "a") as f:
       f.write(f"{step} TRAIN {loss_accum.item():.4f}\n")
 
 if ddp:
